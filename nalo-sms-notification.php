@@ -1,11 +1,13 @@
 <?php
 /**
- * Plugin Name: NALO SMS WooCommerce Notifications
+ * Plugin Name: NALO SMS Notifications for WooCommerce
  * Description: Send SMS notifications and custom messages to customers via NALO API.
- * Version: 2.1
+ * Version: 2.4
  * Author: Peka Integrated Technologies
  * Requires at least: 6.0
  * Requires PHP: 7.4
+ * License: GPL v2 or later
+ * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  */
 
 if (!defined('ABSPATH')) exit;
@@ -29,6 +31,8 @@ add_action('plugins_loaded', function () {
             add_action("woocommerce_update_options_{$this->tab_id}", [$this,'save_settings']);
 
             add_action('add_meta_boxes', [$this,'add_order_sms_box']);
+
+            add_action('woocommerce_admin_field_nalo_donate', [$this,'render_donate_field']);
         }
 
         /* ================= SETTINGS TAB ================= */
@@ -49,35 +53,21 @@ add_action('plugins_loaded', function () {
         private function get_settings() {
 
             return [
+                ['title'=>'NALO SMS Settings','type'=>'title','id'=>'nalo_sms_section'],
+
+                ['title'=>'Authentication Key','id'=>'nalo_auth_key','type'=>'password'],
+                ['title'=>'Sender ID','id'=>'nalo_sender_id','type'=>'text'],
 
                 [
-                    'title' => 'NALO SMS Settings',
-                    'type'  => 'title',
-                    'id'    => 'nalo_sms_section'
-                ],
-
-                [
-                    'title' => 'Authentication Key',
-                    'id'    => 'nalo_auth_key',
-                    'type'  => 'password',
-                ],
-
-                [
-                    'title' => 'Sender ID',
-                    'id'    => 'nalo_sender_id',
-                    'type'  => 'text',
-                ],
-
-                [
-                    'title' => 'Enable SMS For',
-                    'id'    => 'nalo_enabled_statuses',
-                    'type'  => 'multiselect',
-                    'class' => 'wc-enhanced-select',
-                    'options' => [
-                        'processing' => 'Processing',
-                        'completed'  => 'Completed',
-                        'on-hold'    => 'On Hold',
-                        'cancelled'  => 'Cancelled',
+                    'title'=>'Enable SMS For',
+                    'id'=>'nalo_enabled_statuses',
+                    'type'=>'multiselect',
+                    'class'=>'wc-enhanced-select',
+                    'options'=>[
+                        'processing'=>'Processing',
+                        'completed'=>'Completed',
+                        'on-hold'=>'On Hold',
+                        'cancelled'=>'Cancelled',
                     ],
                 ],
 
@@ -86,41 +76,32 @@ add_action('plugins_loaded', function () {
                 ['title'=>'On-hold Template','id'=>'nalo_tpl_on-hold','type'=>'textarea'],
                 ['title'=>'Cancelled Template','id'=>'nalo_tpl_cancelled','type'=>'textarea'],
 
-                [
-                    'type' => 'custom',
-                    'id'   => 'nalo_sms_donate',
-                    'desc' => '
-                        <hr>
-                        <p><strong>Support Development ❤️</strong></p>
-                        <p>If this plugin helps your business, consider supporting development.Thank you!!</p>
-                        <a href="https://paystack.shop/pay/s66qyjn25-"
-                           target="_blank"
-                           style="
-                             background:#2271b1;
-                             color:#fff;
-                             padding:10px 18px;
-                             border-radius:4px;
-                             text-decoration:none;
-                             font-weight:bold;
-                           ">
-                           Donate via Paystack
-                        </a>
-                    ',
-                ],
-
-                [
-                    'type' => 'sectionend',
-                    'id'   => 'nalo_sms_section'
-                ],
+                ['type'=>'nalo_donate','id'=>'nalo_sms_donate'],
+                ['type'=>'sectionend','id'=>'nalo_sms_section'],
             ];
+        }
+
+        /* ================= DONATE ================= */
+
+        public function render_donate_field() {
+            ?>
+            <tr>
+                <th><label><?php esc_html_e('Support Development', 'nalo-sms'); ?></label></th>
+                <td>
+                    <a href="https://paystack.shop/pay/s66qyjn25-" target="_blank" class="button button-primary">
+                        <?php esc_html_e('Donate via Paystack', 'nalo-sms'); ?>
+                    </a>
+                </td>
+            </tr>
+            <?php
         }
 
         /* ================= ORDER STATUS ================= */
 
         public function on_status_change($order_id, $old, $new, $order) {
 
-            $enabled = (array)get_option('nalo_enabled_statuses', []);
-            if (!in_array($new, $enabled)) return;
+            $enabled = (array) get_option('nalo_enabled_statuses', []);
+            if (!in_array($new, $enabled, true)) return;
 
             $template = get_option("nalo_tpl_$new");
             if (!$template) return;
@@ -147,34 +128,43 @@ add_action('plugins_loaded', function () {
         public function add_order_sms_box() {
             add_meta_box(
                 'nalo_sms_box',
-                'Send Custom SMS',
+                __('Send Custom SMS', 'nalo-sms'),
                 [$this,'render_sms_box'],
                 'shop_order',
-                'side',
-                'high'
+                'side'
             );
         }
 
         public function render_sms_box($post) {
 
-            if (isset($_POST['nalo_custom_sms'])) {
+            wp_nonce_field('nalo_sms_nonce_action', 'nalo_sms_nonce');
+
+            if (
+                isset($_POST['nalo_custom_sms'], $_POST['nalo_sms_nonce']) &&
+                wp_verify_nonce($_POST['nalo_sms_nonce'], 'nalo_sms_nonce_action')
+            ) {
                 $order = wc_get_order($post->ID);
                 $phone = $this->normalize_phone($order->get_billing_phone());
-                $msg   = sanitize_textarea_field($_POST['nalo_custom_sms']);
+
+                $msg = sanitize_textarea_field(
+                    wp_unslash($_POST['nalo_custom_sms'])
+                );
 
                 if ($phone && $msg) {
                     $this->send_sms($phone, $msg);
-                    echo '<p style="color:green;">SMS Sent</p>';
+                    echo '<p style="color:green;">'.esc_html__('SMS Sent','nalo-sms').'</p>';
                 }
             }
             ?>
             <textarea name="nalo_custom_sms" rows="4" style="width:100%;"
-                placeholder="Type custom SMS to customer..."></textarea>
-            <button class="button button-primary" style="margin-top:6px;">Send SMS</button>
+                placeholder="<?php esc_attr_e('Type custom SMS…','nalo-sms'); ?>"></textarea>
+            <button class="button button-primary" style="margin-top:6px;">
+                <?php esc_html_e('Send SMS','nalo-sms'); ?>
+            </button>
             <?php
         }
 
-        /* ================= SMS CORE ================= */
+        /* ================= SMS ================= */
 
         private function send_sms($phone, $message) {
 
@@ -183,20 +173,17 @@ add_action('plugins_loaded', function () {
             if (!$key || !$sender) return;
 
             $phone   = $this->normalize_phone($phone);
-            $message = $this->clean_currency($message);
             $message = wp_strip_all_tags($message);
-
-            $this->logger->info("SMS → $phone | $message", ['source'=>'nalo_sms']);
 
             wp_remote_post(
                 'https://sms.nalosolutions.com/smsbackend/clientapi/Resl_Nalo/send-message/',
                 [
-                    'timeout' => 20,
-                    'body' => [
-                        'key'       => $key,
-                        'sender_id'=> $sender,
-                        'msisdn'   => $phone,
-                        'message'  => $message,
+                    'timeout'=>20,
+                    'body'=>[
+                        'key'=>$key,
+                        'sender_id'=>$sender,
+                        'msisdn'=>$phone,
+                        'message'=>$message,
                     ]
                 ]
             );
@@ -212,16 +199,9 @@ add_action('plugins_loaded', function () {
         }
 
         private function clean_currency($amount) {
-
-            if (is_numeric($amount)) {
-                return 'GHS ' . number_format((float)$amount, 2);
-            }
-
-            $amount = html_entity_decode($amount);
-            $amount = wp_strip_all_tags($amount);
-            $amount = preg_replace('/[^\d\.]/', '', $amount);
-
-            return 'GHS ' . $amount;
+            return is_numeric($amount)
+                ? 'GHS '.number_format((float)$amount,2)
+                : 'GHS '.preg_replace('/[^\d\.]/','',(string)$amount);
         }
     }
 
