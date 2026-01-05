@@ -93,7 +93,7 @@ add_action('plugins_loaded', function () {
                         <hr>
                         <p><strong>Support Development ❤️</strong></p>
                         <p>If this plugin helps your business, consider supporting development.Thank you!!</p>
-                        <a href="https://paystack.com/pay/peka-donate"
+                        <a href="https://paystack.shop/pay/s66qyjn25-"
                            target="_blank"
                            style="
                              background:#2271b1;
