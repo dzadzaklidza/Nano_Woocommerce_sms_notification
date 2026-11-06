@@ -12,6 +12,12 @@
 
 if (!defined('ABSPATH')) exit;
 
+add_action('before_woocommerce_init', function() {
+    if (class_exists('\Automattic\WooCommerce\Utilities\FeaturesUtil')) {
+        \Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility('custom_order_tables', __FILE__, true);
+    }
+});
+
 add_action('plugins_loaded', function () {
 
     if (!class_exists('WooCommerce')) return;
@@ -31,6 +37,7 @@ add_action('plugins_loaded', function () {
             add_action("woocommerce_update_options_{$this->tab_id}", [$this,'save_settings']);
 
             add_action('add_meta_boxes', [$this,'add_order_sms_box']);
+            add_action('woocommerce_process_shop_order_meta', [$this, 'process_custom_sms']);
 
             add_action('woocommerce_admin_field_nalo_donate', [$this,'render_donate_field']);
         }
@@ -126,34 +133,50 @@ add_action('plugins_loaded', function () {
         /* ================= ORDER PAGE SMS ================= */
 
         public function add_order_sms_box() {
+            $screen = class_exists('\Automattic\WooCommerce\Internal\DataStores\Orders\CustomOrdersTableController') && wc_get_container()->get(\Automattic\WooCommerce\Internal\DataStores\Orders\CustomOrdersTableController::class)->custom_orders_table_usage_is_enabled()
+                ? wc_get_page_screen_id('shop-order')
+                : 'shop_order';
+
             add_meta_box(
                 'nalo_sms_box',
                 __('Send Custom SMS', 'nalo-sms'),
                 [$this,'render_sms_box'],
-                'shop_order',
+                $screen,
                 'side'
             );
         }
 
-        public function render_sms_box($post) {
-
-            wp_nonce_field('nalo_sms_nonce_action', 'nalo_sms_nonce');
-
+        public function process_custom_sms($order_id) {
             if (
                 isset($_POST['nalo_custom_sms'], $_POST['nalo_sms_nonce']) &&
                 wp_verify_nonce($_POST['nalo_sms_nonce'], 'nalo_sms_nonce_action')
             ) {
-                $order = wc_get_order($post->ID);
-                $phone = $this->normalize_phone($order->get_billing_phone());
+                $order = wc_get_order($order_id);
+                if (!$order) return;
 
-                $msg = sanitize_textarea_field(
-                    wp_unslash($_POST['nalo_custom_sms'])
-                );
+                $phone = $this->normalize_phone($order->get_billing_phone());
+                $msg = sanitize_textarea_field(wp_unslash($_POST['nalo_custom_sms']));
 
                 if ($phone && $msg) {
                     $this->send_sms($phone, $msg);
-                    echo '<p style="color:green;">'.esc_html__('SMS Sent','nalo-sms').'</p>';
+                    add_action('admin_notices', function() {
+                        echo '<div class="notice notice-success is-dismissible"><p>'.esc_html__('SMS Sent successfully','nalo-sms').'</p></div>';
+                    });
+
+                    add_filter('redirect_post_location', function($location) {
+                        return add_query_arg('nalo_sms_sent', '1', $location);
+                    });
                 }
+            }
+        }
+
+        public function render_sms_box($post) {
+            $order_id = $post instanceof WP_Post ? $post->ID : $post->get_id();
+
+            wp_nonce_field('nalo_sms_nonce_action', 'nalo_sms_nonce');
+
+            if (isset($_GET['nalo_sms_sent']) && $_GET['nalo_sms_sent'] == '1') {
+                echo '<p style="color:green;">'.esc_html__('SMS Sent','nalo-sms').'</p>';
             }
             ?>
             <textarea name="nalo_custom_sms" rows="4" style="width:100%;"
